@@ -1,0 +1,51 @@
+{
+  "name": "agent-visual-diff",
+  "version": "0.1.0",
+  "description": "Deterministic visual regression for agents: PNG diffs, ranked regions, compact JSON, and CI-friendly exit codes.",
+  "type": "module",
+  "bin": {
+    "agent-visual-diff": "./src/cli.js",
+    "avd": "./src/cli.js"
+  },
+  "exports": {
+    ".": "./src/compare.js",
+    "./regions": "./src/regions.js"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check src/cli.js && node --check src/compare.js && node --check src/regions.js && npm test",
+    "prepack": "npm run check",
+    "pack:dry": "npm pack --dry-run"
+  },
+  "dependencies": {
+    "pixelmatch": "7.2.0",
+    "pngjs": "7.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lbframe/agent-visual-diff.git"
+  },
+  "homepage": "https://github.com/lbframe/agent-visual-diff#readme",
+  "bugs": {
+    "url": "https://github.com/lbframe/agent-visual-diff/issues"
+  },
+  "keywords": [
+    "visual-regression",
+    "pixelmatch",
+    "cli",
+    "screenshot",
+    "testing",
+    "ai-agent",
+    "coding-agent",
+    "visual-diff"
+  ],
+  "license": "MIT"
+}
