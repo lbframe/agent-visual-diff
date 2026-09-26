@@ -72,11 +72,20 @@ overlap an ignored zone, because `mergeGap` and `regionPadding` expand boxes aft
 
 Contract:
 
-- Regions are clamped to the viewport. A region entirely outside it is a hard error.
+- Regions are validated identically whether they come from `--mask`, `--ignore`, or are passed
+  straight to `comparePngFiles({ mask })`: `x`/`y` integers `>= 0`, `w`/`h` integers `> 0`,
+  `name` a non-empty string when present, no unknown keys.
+- Out-of-range coordinates are rejected, not clamped. A negative index would rasterize into the
+  previous scanline and report a pixel count nobody asked for.
+- Regions are then clamped to the viewport; one entirely outside it is a hard error.
 - Overlapping regions are unioned; `ignoredPixels` counts each pixel once.
 - An unnamed region is reported as `region-<n>`, 1-based, in declaration order.
 - Regions from `--mask` come first, then `--ignore` specs in command-line order.
 - Masking the whole viewport is an error: there is nothing left to compare.
+
+Because the API and the CLI share one validation path, `ignoredPixels + evaluatedPixels`
+always equals `width * height` on a successful run. If either number looks wrong, the region
+that produced it was rejected rather than silently reinterpreted.
 
 An agent reading a report can tell exactly what was excluded. It cannot tell whether the
 exclusion was justified — that judgment stays with the caller. A mask wide enough to hide a

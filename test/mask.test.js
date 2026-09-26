@@ -68,8 +68,79 @@ test('clampRegions trims to the viewport, names unnamed zones, rejects fully-out
   ]);
   assert.throws(
     () => clampRegions([{ name: 'off', x: 0, y: 900, w: 10, h: 10 }], 20, 10),
-    /"off" at 0,900 10x10 lies entirely outside the 20x10 viewport/
+    /regions\[0\] \("off"\) at 0,900 10x10 lies entirely outside the 20x10 viewport/
   );
+});
+
+test('the programmatic API holds regions to the same contract as a mask file', () => {
+  const invalid = [
+    ['negative x', { name: 'bad', x: -10, y: 0, w: 20, h: 100 }, /"x" and "y" must be >= 0, got x=-10 y=0/],
+    ['negative y', { name: 'bad', x: 0, y: -5, w: 5, h: 5 }, /"x" and "y" must be >= 0, got x=0 y=-5/],
+    ['negative w', { name: 'bad', x: 0, y: 0, w: -5, h: 5 }, /"w" and "h" must be > 0, got w=-5 h=5/],
+    ['zero h', { name: 'bad', x: 0, y: 0, w: 5, h: 0 }, /"w" and "h" must be > 0, got w=5 h=0/],
+    ['fractional x', { name: 'bad', x: 0.5, y: 0, w: 5, h: 5 }, /"x" must be an integer, got 0.5/],
+    ['NaN w', { name: 'bad', x: 0, y: 0, w: NaN, h: 5 }, /"w" must be an integer, got null/],
+    ['string coords', { name: 'bad', x: '0', y: 0, w: 5, h: 5 }, /"x" must be an integer, got "0"/],
+    ['missing h', { name: 'bad', x: 0, y: 0, w: 5 }, /"h" must be an integer, got undefined/],
+    ['empty name', { name: '', x: 0, y: 0, w: 2, h: 2 }, /"name" must be a non-empty string/],
+    ['numeric name', { name: 123, x: 0, y: 0, w: 2, h: 2 }, /"name" must be a non-empty string/],
+    ['unknown key', { name: 'k', x: 0, y: 0, w: 2, h: 2, colour: 'red' }, /unknown key "colour"/],
+    ['not an object', 'nope', /must be an object with x, y, w, h/]
+  ];
+
+  const d = tmp();
+  const expected = path.join(d, 'a.png');
+  const actual = path.join(d, 'b.png');
+  image(expected);
+  image(actual, { x: 5, y: 2, w: 3, h: 2 });
+
+  for (const key of ['mask', 'ignore']) {
+    for (const [label, region, expectedError] of invalid) {
+      assert.throws(
+        () => comparePngFiles({ expected, actual, [key]: [region] }),
+        expectedError,
+        `${key}: ${label}`
+      );
+    }
+  }
+});
+
+test('a region that would rasterize into the previous scanline is rejected, not clamped', () => {
+  const { mask } = buildIgnoreMask(clampRegions([{ x: 0, y: 0, w: 2, h: 2 }], 20, 10), 20, 10);
+  assert.equal(mask[0], 1);
+
+  assert.throws(
+    () => clampRegions([{ name: 'bad', x: -3, y: 2, w: 5, h: 3 }], 20, 10),
+    /"x" and "y" must be >= 0/
+  );
+});
+
+test('no invalid region can produce an ignoredPixels/evaluatedPixels pair off the total', () => {
+  const d = tmp();
+  const expected = path.join(d, 'a.png');
+  const actual = path.join(d, 'b.png');
+  image(expected);
+  image(actual, { x: 5, y: 2, w: 3, h: 2 });
+  const totalPixels = 20 * 10;
+
+  const bad = [
+    { name: 'neg-x', x: -1, y: 0, w: 1, h: 1 },
+    { name: 'neg-x-wrap', x: -3, y: 2, w: 5, h: 3 },
+    { name: 'neg-y', x: 0, y: -5, w: 5, h: 5 },
+    { name: 'neg-w', x: 0, y: 0, w: -5, h: 5 },
+    { name: 'frac', x: 0, y: 0, w: 2.5, h: 2 },
+    { name: 'off-screen', x: 500, y: 500, w: 10, h: 10 }
+  ];
+
+  for (const region of bad) {
+    assert.throws(() => comparePngFiles({ expected, actual, mask: [region] }), Error, JSON.stringify(region));
+    assert.throws(() => comparePngFiles({ expected, actual, ignore: [region] }), Error, JSON.stringify(region));
+  }
+
+  const valid = comparePngFiles({ expected, actual, mask: [{ name: 'ok', x: 0, y: 0, w: 4, h: 4 }] });
+  assert.equal(valid.ignoredPixels, 16);
+  assert.equal(valid.evaluatedPixels, totalPixels - 16);
+  assert.equal(valid.ignoredPixels + valid.evaluatedPixels, totalPixels);
 });
 
 test('buildIgnoreMask counts the union of overlapping regions once', () => {

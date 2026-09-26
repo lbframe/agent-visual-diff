@@ -60,21 +60,26 @@ export function parseIgnoreSpec(spec, name) {
   return validateRegion({ name, x, y, w, h }, '--ignore');
 }
 
-/** Clamp regions to the viewport, name unnamed ones, and reject zones fully outside it. */
+/**
+ * Validate, then clamp, every region against the viewport.
+ *
+ * This is the single funnel for the CLI and the programmatic API, so a region
+ * handed straight to `comparePngFiles({ mask })` is held to exactly the same
+ * contract as one read from a mask file. Negative or out-of-range coordinates
+ * are rejected rather than clamped: a negative index would silently rasterize
+ * into the previous scanline and report a pixel count nobody asked for.
+ */
 export function clampRegions(regions, width, height) {
   return regions.map((r, index) => {
-    for (const key of ['x', 'y', 'w', 'h']) {
-      if (!Number.isInteger(r?.[key])) {
-        throw new Error(`regions[${index}]: "${key}" must be an integer, got ${JSON.stringify(r?.[key])}`);
-      }
-    }
+    const where = `regions[${index}]`;
+    validateRegion(r, where);
     const name = r.name ?? `region-${index + 1}`;
     const x0 = Math.min(r.x, width);
     const y0 = Math.min(r.y, height);
     const x1 = Math.min(r.x + r.w, width);
     const y1 = Math.min(r.y + r.h, height);
     if (x1 <= x0 || y1 <= y0) {
-      throw new Error(`region "${name}" at ${r.x},${r.y} ${r.w}x${r.h} lies entirely outside the ${width}x${height} viewport`);
+      throw new Error(`${where} ("${name}") at ${r.x},${r.y} ${r.w}x${r.h} lies entirely outside the ${width}x${height} viewport`);
     }
     return { name, x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
   });
