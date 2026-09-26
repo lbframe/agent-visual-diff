@@ -63,11 +63,14 @@ export function parseIgnoreSpec(spec, name) {
 /**
  * Validate, then clamp, every region against the viewport.
  *
- * This is the single funnel for the CLI and the programmatic API, so a region
- * handed straight to `comparePngFiles({ mask })` is held to exactly the same
- * contract as one read from a mask file. Negative or out-of-range coordinates
- * are rejected rather than clamped: a negative index would silently rasterize
- * into the previous scanline and report a pixel count nobody asked for.
+ * This is the single validation funnel for the CLI and the programmatic API,
+ * so a region passed directly to `comparePngFiles({ mask })` follows the same
+ * contract as one read from a mask file.
+ *
+ * Negative coordinates are rejected because they can wrap raster writes into
+ * a previous scanline. Regions that start inside the viewport but extend past
+ * its right or bottom edge are safely clamped. Regions that lie entirely
+ * outside the viewport are rejected.
  */
 export function clampRegions(regions, width, height) {
   return regions.map((r, index) => {
