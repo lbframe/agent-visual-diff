@@ -9,7 +9,8 @@
   },
   "exports": {
     ".": "./src/compare.js",
-    "./regions": "./src/regions.js"
+    "./regions": "./src/regions.js",
+    "./mask": "./src/mask.js"
   },
   "files": [
     "src/",
@@ -18,7 +19,8 @@
   ],
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/cli.js && node --check src/compare.js && node --check src/regions.js && npm test",
+    "check": "node --check src/cli.js && node --check src/compare.js && node --check src/regions.js && node --check src/mask.js && node --check bench/run.mjs && node --check bench/inject-bug.mjs && npm test",
+    "bench": "node bench/run.mjs",
     "prepack": "npm run check",
     "pack:dry": "npm pack --dry-run"
   },
