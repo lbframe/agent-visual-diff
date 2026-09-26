@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/lbframe/agent-visual-diff/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lbframe/agent-visual-diff/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-111111.svg"></a>
-  <img alt="Node 20+" src="https://img.shields.io/badge/node-%E2%89%A520-111111.svg">
+  <img alt="Node 22+" src="https://img.shields.io/badge/node-%E2%89%A522-111111.svg">
   <img alt="Agent friendly" src="https://img.shields.io/badge/output-agent--friendly-111111.svg">
 </p>
 
@@ -41,7 +41,7 @@ Coding agents need something slightly different:
 
 ## Quick start
 
-Requires Node.js 20+.
+Requires Node.js 22+.
 
 ```bash
 npm install
@@ -255,6 +255,22 @@ Region primitives are also exported from `agent-visual-diff/regions`, and mask h
 A minimal integration lives in [`examples/playwright-snippet.mjs`](examples/playwright-snippet.mjs).
 
 The comparator is deterministic for identical PNG inputs and settings. Browser capture itself may not be. Fix the viewport, fonts, animations, dates, random data, dynamic content, and browser/runtime versions when reproducibility matters.
+
+## Supported Node.js versions
+
+Supported:
+
+- Node.js 22 LTS
+- Node.js 24 LTS
+
+Also tested:
+
+- Node.js 26 Current
+
+`agent-visual-diff` supports non-EOL Node.js versions relevant to production use. The minimum
+supported major is currently Node 22. CI also tests the latest Current release to catch
+forward-compatibility issues early; Current is a signal, not a support commitment. The LTS lines
+are what the project stands behind.
 
 ## Development
 
