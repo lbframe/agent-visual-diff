@@ -113,6 +113,64 @@ An agent can inspect `x=160,y=80,w=500,h=40` first, fix the likely cause, recapt
 
 See [the agent contract](docs/agent-contract.md) for the intended automation loop and field semantics.
 
+## Ignore / mask regions
+
+Some regions of a page are dynamic by design: marquees, carousels, `<canvas>`, count-up
+statistics, rotating testimonials, auto-cycling accordions, clocks. Comparing two captures
+honestly still reports them as differences, which buries the real ones.
+
+`--mask` excludes a known set of rectangles from the comparison. Masked pixels are removed
+from `diffPixels`, never counted in a region, and dropped from the `diffRatio` denominator.
+
+```bash
+avd compare reference.png actual.png \
+  --mask .avd/mask.json
+```
+
+Mask file format — see [`examples/mask.json`](examples/mask.json):
+
+```json
+{
+  "regions": [
+    { "name": "testimonial-carousel", "x": 120, "y": 2100, "w": 1200, "h": 600 }
+  ]
+}
+```
+
+One-off zones can also be passed inline, repeatably:
+
+```bash
+avd compare reference.png actual.png \
+  --ignore 120,2100,1200,600 \
+  --ignore 0,7200,1440,400
+```
+
+`--mask` and `--ignore` combine: file regions first, then inline regions in the order given.
+
+The report gains three fields, always present so the JSON shape never changes:
+
+```json
+{
+  "ignoredRegions": [
+    { "name": "testimonial-carousel", "x": 120, "y": 2100, "w": 1200, "h": 600 }
+  ],
+  "ignoredPixels": 720000,
+  "evaluatedPixels": 12345678
+}
+```
+
+`diffRatio` is `diffPixels / evaluatedPixels`, so a run that masks 5% of the page does not
+report a lower ratio just because the page is smaller. In the diff PNG, excluded zones get a
+20% gray wash and suppressed differences stay visible inside them as darker red. The JSON
+remains the source of truth for exact coordinates.
+
+Masks are viewport-scoped. Regions are clamped to the image; a region entirely outside it is
+an error rather than a silent no-op, so a typo fails loudly instead of quietly passing.
+
+Masking is only as honest as the mask. Keep zones tight around genuinely dynamic UI, and
+never widen a mask just to make a run go green — the
+[benchmark](bench/README.md) shows what a mask does to real defects when it does.
+
 ## CI mode
 
 Fail when the changed-pixel ratio exceeds a threshold:
@@ -147,6 +205,8 @@ JSON is still emitted on exit code `2`, so the failed run keeps its evidence.
 --merge-gap <px>
 --region-padding <px>
 --max-regions <n>
+--mask <file.json>
+--ignore <x,y,w,h>
 --fail-above <ratio>
 -h, --help
 -v, --version
@@ -156,11 +216,12 @@ JSON is still emitted on exit code `2`, so the failed run keeps its evidence.
 
 1. Run `pixelmatch` with `diffMask: true`.
 2. Convert the alpha channel to a binary diff mask.
-3. Run deterministic 8-neighbour connected-component labelling.
-4. Drop components smaller than `minRegionPixels`.
-5. Merge boxes whose x/y separation is within `mergeGap`.
-6. Apply `regionPadding` and clamp to the viewport.
-7. Sort by changed pixels descending, then y/x for stable ties.
+3. Zero out every pixel covered by a mask region.
+4. Run deterministic 8-neighbour connected-component labelling.
+5. Drop components smaller than `minRegionPixels`.
+6. Merge boxes whose x/y separation is within `mergeGap`.
+7. Apply `regionPadding` and clamp to the viewport.
+8. Sort by changed pixels descending, then y/x for stable ties.
 
 `px` is the number of changed pixels represented by a region. `area` is the final bounding-box area and may include padding or unchanged pixels inside the rectangle.
 
@@ -177,11 +238,14 @@ const report = comparePngFiles({
   threshold: 0.1,
   minRegionPixels: 3,
   mergeGap: 6,
-  regionPadding: 4
+  regionPadding: 4,
+  mask: [{ name: 'testimonial-carousel', x: 120, y: 2100, w: 1200, h: 600 }],
+  ignore: [{ name: 'inline-1', x: 0, y: 7200, w: 1440, h: 400 }]
 });
 ```
 
-Region primitives are also exported from `agent-visual-diff/regions`.
+Region primitives are also exported from `agent-visual-diff/regions`, and mask helpers
+(`readMaskFile`, `parseIgnoreSpec`, `clampRegions`, `buildIgnoreMask`) from `agent-visual-diff/mask`.
 
 ## Playwright
 
@@ -195,8 +259,12 @@ The comparator is deterministic for identical PNG inputs and settings. Browser c
 npm install
 npm test
 npm run check
+npm run bench
 npm run pack:dry
 ```
+
+`npm run bench` replays the mask benchmark against real page captures. See
+[bench/README.md](bench/README.md) for the fixtures and the recorded numbers.
 
 Test the exact package artifact before publishing:
 

@@ -33,6 +33,19 @@ Comparison:
   --region-padding <px>         expand final boxes (default: 2)
   --max-regions <n>             cap reported regions (default: 50)
 
+Masks (exclude known-dynamic or irrelevant regions from the comparison):
+  --mask <file.json>            read regions from a JSON mask file
+  --ignore <x,y,w,h>            ignore one inline region, repeatable
+
+  Mask file format:
+    { "regions": [ { "name": "testimonial-carousel",
+                     "x": 120, "y": 2100, "w": 1200, "h": 600 } ] }
+
+  Masked pixels are excluded from diffPixels, from the detected regions, and
+  from the diffRatio denominator. Excluded zones are grayed in the diff PNG.
+
+  Regions are clamped to the viewport; a zone entirely outside it is an error.
+
 CI:
   --fail-above <ratio>          exit 2 when diffRatio exceeds ratio
                                 example: 0.01 = more than 1% changed
@@ -71,9 +84,10 @@ function parse(argv) {
 
   const positional = [];
   const booleanFlags = new Set(['--include-aa', '--json', '--compact']);
+  const multiValueFlags = new Set(['--ignore']);
   const valueFlags = new Set([
     '--out', '--diff', '--section', '--threshold', '--min-region-pixels',
-    '--merge-gap', '--region-padding', '--max-regions', '--fail-above'
+    '--merge-gap', '--region-padding', '--max-regions', '--fail-above', '--mask'
   ]);
 
   for (let i = 0; i < args.length; i++) {
@@ -83,6 +97,13 @@ function parse(argv) {
 
     if (booleanFlags.has(a)) {
       options[a.slice(2)] = true;
+      continue;
+    }
+
+    if (multiValueFlags.has(a)) {
+      const v = args[++i];
+      if (v == null || v.startsWith('--')) throw new Error(`missing value for ${a}`);
+      (options[a.slice(2)] ??= []).push(v);
       continue;
     }
 
@@ -111,12 +132,28 @@ function humanSummary(report, outPath) {
     `Regions: ${report.regions.length}`
   ];
 
+  if (report.ignoredRegions.length) {
+    lines.push(
+      `Ignored: ${report.ignoredRegions.length} region(s), ` +
+      `${report.ignoredPixels.toLocaleString('en-US')}px excluded ` +
+      `(${report.evaluatedPixels.toLocaleString('en-US')}px evaluated)`
+    );
+  }
+
   if (report.regions.length) {
     lines.push('');
     for (const r of report.regions.slice(0, 10)) {
       lines.push(`#${r.id}  x=${r.x} y=${r.y}  ${r.w}x${r.h}  ${r.px}px`);
     }
     if (report.regions.length > 10) lines.push(`… ${report.regions.length - 10} more region(s)`);
+  }
+
+  if (report.ignoredRegions.length) {
+    lines.push('');
+    for (const r of report.ignoredRegions.slice(0, 10)) {
+      lines.push(`~ ${r.name}  x=${r.x} y=${r.y}  ${r.w}x${r.h}`);
+    }
+    if (report.ignoredRegions.length > 10) lines.push(`… ${report.ignoredRegions.length - 10} more ignored region(s)`);
   }
 
   if (outPath || report.diffPng) {
@@ -152,6 +189,11 @@ try {
   const failAbove = a['fail-above'] == null ? null : parseNumber('--fail-above', a['fail-above'], { min: 0, max: 1 });
 
   const { comparePngFiles } = await import('./compare.js');
+  const { readMaskFile, parseIgnoreSpec } = await import('./mask.js');
+
+  const mask = a.mask ? readMaskFile(a.mask) : [];
+  const ignore = (a.ignore ?? []).map((spec, index) => parseIgnoreSpec(spec, `inline-${index + 1}`));
+
   const report = comparePngFiles({
     expected: parsed.expected,
     actual: parsed.actual,
@@ -162,7 +204,10 @@ try {
     minRegionPixels,
     mergeGap,
     regionPadding,
-    maxRegions
+    maxRegions,
+    mask,
+    ignore,
+    maskFile: a.mask ?? null
   });
 
   const json = `${JSON.stringify(report, null, compact ? 0 : 2)}\n`;

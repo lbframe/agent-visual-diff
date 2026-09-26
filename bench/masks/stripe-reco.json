@@ -1,0 +1,25 @@
+{
+  "regions": [
+    {
+      "name": "hero-canvas-animation",
+      "x": 230,
+      "y": 0,
+      "w": 430,
+      "h": 270
+    },
+    {
+      "name": "live-transaction-feed",
+      "x": 720,
+      "y": 0,
+      "w": 580,
+      "h": 270
+    },
+    {
+      "name": "recommender-typing-animation",
+      "x": 330,
+      "y": 400,
+      "w": 790,
+      "h": 270
+    }
+  ]
+}

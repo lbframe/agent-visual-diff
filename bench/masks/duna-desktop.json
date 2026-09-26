@@ -1,0 +1,32 @@
+{
+  "regions": [
+    {
+      "name": "stats-countup",
+      "x": 150,
+      "y": 1360,
+      "w": 1140,
+      "h": 220
+    },
+    {
+      "name": "testimonial-carousel",
+      "x": 210,
+      "y": 2470,
+      "w": 960,
+      "h": 420
+    },
+    {
+      "name": "product-accordion-autocycle",
+      "x": 150,
+      "y": 3900,
+      "w": 1140,
+      "h": 3700
+    },
+    {
+      "name": "news-card-carousel",
+      "x": 150,
+      "y": 8460,
+      "w": 1140,
+      "h": 310
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import path from 'node:path';
 import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 import { connectedComponents, mergeRegions, padAndClampRegions, sortRegions } from './regions.js';
+import { buildIgnoreMask, clampRegions, paintIgnoredOverlay } from './mask.js';
 
 function readPng(file) {
   return PNG.sync.read(fs.readFileSync(file));
@@ -23,7 +24,10 @@ export function comparePngFiles({
   minRegionPixels = 2,
   mergeGap = 6,
   regionPadding = 2,
-  maxRegions = 50
+  maxRegions = 50,
+  mask = [],
+  ignore = [],
+  maskFile = null
 }) {
   const a = readPng(expected);
   const b = readPng(actual);
@@ -33,7 +37,7 @@ export function comparePngFiles({
 
   const { width, height } = a;
   const diff = new PNG({ width, height });
-  const diffPixels = pixelmatch(a.data, b.data, diff.data, width, height, {
+  pixelmatch(a.data, b.data, diff.data, width, height, {
     threshold,
     includeAA,
     diffMask: true,
@@ -41,15 +45,25 @@ export function comparePngFiles({
     alpha: 1
   });
 
-  if (diffPng) {
-    fs.mkdirSync(path.dirname(diffPng), { recursive: true });
-    fs.writeFileSync(diffPng, PNG.sync.write(diff));
+  const totalPixels = width * height;
+  const ignoredRegions = clampRegions([...mask, ...ignore], width, height);
+  const { mask: ignoreMask, ignoredPixels } = buildIgnoreMask(ignoredRegions, width, height);
+  const evaluatedPixels = totalPixels - ignoredPixels;
+  if (evaluatedPixels === 0) {
+    throw new Error(`all ${totalPixels} pixels are ignored: nothing left to compare`);
   }
 
-  const mask = new Uint8Array(width * height);
-  for (let i = 0; i < mask.length; i++) mask[i] = diff.data[i * 4 + 3] > 0 ? 1 : 0;
+  const diffMask = new Uint8Array(totalPixels);
+  let diffPixels = 0;
+  for (let i = 0; i < totalPixels; i++) {
+    if (ignoreMask[i]) continue;
+    if (diff.data[i * 4 + 3] > 0) {
+      diffMask[i] = 1;
+      diffPixels++;
+    }
+  }
 
-  let regions = connectedComponents(mask, width, height, minRegionPixels);
+  let regions = connectedComponents(diffMask, width, height, minRegionPixels);
   regions = mergeRegions(regions, mergeGap);
   regions = padAndClampRegions(regions, width, height, regionPadding);
   regions = sortRegions(regions).slice(0, maxRegions).map((r, index) => ({
@@ -60,10 +74,16 @@ export function comparePngFiles({
     shareOfDiff: diffPixels ? round(r.px / diffPixels, 4) : 0
   }));
 
-  const totalPixels = width * height;
-  const diffRatio = diffPixels / totalPixels;
+  const diffRatio = diffPixels / evaluatedPixels;
+
+  paintIgnoredOverlay(diff.data, ignoreMask);
+  if (diffPng) {
+    fs.mkdirSync(path.dirname(diffPng), { recursive: true });
+    fs.writeFileSync(diffPng, PNG.sync.write(diff));
+  }
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     section,
     viewport: `${width}x${height}`,
     width,
@@ -72,8 +92,11 @@ export function comparePngFiles({
     matchRatio: round(1 - diffRatio, 6),
     diffPixels,
     diffRatio: round(diffRatio, 6),
+    ignoredPixels,
+    evaluatedPixels,
+    ignoredRegions,
     regions,
     diffPng: diffPng ?? null,
-    settings: { threshold, includeAA, minRegionPixels, mergeGap, regionPadding, maxRegions }
+    settings: { threshold, includeAA, minRegionPixels, mergeGap, regionPadding, maxRegions, mask: maskFile }
   };
 }

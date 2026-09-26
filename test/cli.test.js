@@ -65,3 +65,79 @@ test('--fail-above returns exit code 2 after a completed comparison', () => {
   assert.equal(result.status, 2);
   assert.doesNotThrow(() => JSON.parse(result.stdout));
 });
+
+test('--mask excludes regions and reports them in JSON', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'avd-cli-'));
+  const expected = path.join(d, 'expected.png');
+  const actual = path.join(d, 'actual.png');
+  const mask = path.join(d, 'mask.json');
+  png(expected, false);
+  png(actual, true);
+  fs.writeFileSync(mask, JSON.stringify({ regions: [{ name: 'testimonial-carousel', x: 0, y: 0, w: 4, h: 2 }] }));
+
+  const human = run(['compare', expected, actual, '--mask', mask, '--merge-gap', '0', '--region-padding', '0']);
+  assert.equal(human.status, 0);
+  assert.match(human.stdout, /Ignored: 1 region\(s\), 8px excluded \(8px evaluated\)/);
+  assert.match(human.stdout, /~ testimonial-carousel  x=0 y=0  4x2/);
+
+  const json = run(['compare', expected, actual, '--mask', mask, '--json', '--merge-gap', '0', '--region-padding', '0']);
+  const report = JSON.parse(json.stdout);
+  assert.equal(report.schemaVersion, 2);
+  assert.equal(report.diffPixels, 8);
+  assert.equal(report.ignoredPixels, 8);
+  assert.equal(report.evaluatedPixels, 8);
+  assert.deepEqual(report.ignoredRegions, [{ name: 'testimonial-carousel', x: 0, y: 0, w: 4, h: 2 }]);
+  assert.equal(report.settings.mask, mask);
+});
+
+test('--ignore is repeatable and merges with --mask', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'avd-cli-'));
+  const expected = path.join(d, 'expected.png');
+  const actual = path.join(d, 'actual.png');
+  const mask = path.join(d, 'mask.json');
+  png(expected, false);
+  png(actual, true);
+  fs.writeFileSync(mask, JSON.stringify({ regions: [{ name: 'from-file', x: 0, y: 0, w: 4, h: 1 }] }));
+
+  const result = run([
+    'compare', expected, actual, '--json',
+    '--mask', mask,
+    '--ignore', '0,1,4,1',
+    '--ignore', '0,2,4,1'
+  ]);
+  const report = JSON.parse(result.stdout);
+  assert.deepEqual(report.ignoredRegions, [
+    { name: 'from-file', x: 0, y: 0, w: 4, h: 1 },
+    { name: 'inline-1', x: 0, y: 1, w: 4, h: 1 },
+    { name: 'inline-2', x: 0, y: 2, w: 4, h: 1 }
+  ]);
+  assert.equal(report.ignoredPixels, 12);
+  assert.equal(report.evaluatedPixels, 4);
+  assert.equal(report.diffPixels, 4);
+});
+
+test('mask errors exit 1 with a clear message', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'avd-cli-'));
+  const expected = path.join(d, 'expected.png');
+  const actual = path.join(d, 'actual.png');
+  png(expected, false);
+  png(actual, true);
+
+  const missing = run(['compare', expected, actual, '--mask', path.join(d, 'nope.json')]);
+  assert.equal(missing.status, 1);
+  assert.match(missing.stderr, /cannot read mask file/);
+
+  const badSpec = run(['compare', expected, actual, '--ignore', '1,2,3']);
+  assert.equal(badSpec.status, 1);
+  assert.match(badSpec.stderr, /--ignore expects "x,y,w,h"/);
+
+  const noValue = run(['compare', expected, actual, '--ignore']);
+  assert.equal(noValue.status, 1);
+  assert.match(noValue.stderr, /missing value for --ignore/);
+});
+
+test('--help documents the mask flags', () => {
+  const help = run(['--help']);
+  assert.match(help.stdout, /--mask <file\.json>/);
+  assert.match(help.stdout, /--ignore <x,y,w,h>/);
+});
