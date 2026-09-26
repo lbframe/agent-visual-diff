@@ -17,6 +17,29 @@ npm run check
 npm run pack:dry
 ```
 
+## Supported Node.js versions
+
+`agent-visual-diff` supports non-EOL Node.js versions relevant to production use. The minimum
+supported major is currently Node 22.
+
+CI runs the full check suite on every supported line:
+
+| Line | Status |
+| --- | --- |
+| Node.js 22 | LTS — minimum supported |
+| Node.js 24 | LTS |
+| Node.js 26 | Current — tested for forward compatibility, not a support commitment |
+
+The Current line is tested to catch incompatibilities early. It is not a promise of permanent
+support; the LTS lines are. Please run the same checks locally on the lowest supported major when
+touching runtime code:
+
+```bash
+nvm use 22
+npm install
+npm run check
+```
+
 ## Design principles
 
 - **Deterministic first.** Same inputs and options should produce the same report ordering and values.
