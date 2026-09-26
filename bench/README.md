@@ -1,3 +1,14 @@
+# Benchmarks
+
+Two benchmarks, each answering a question that cannot be settled by unit tests.
+
+```bash
+npm run bench          # what --mask does to real defects
+npm run bench:shifts   # what --detect-shifts claims, and what it refuses to claim
+```
+
+Both exit non-zero on failure and print Markdown tables.
+
 # Mask benchmark
 
 Measures what `--mask` does to the three sites that motivated the feature, on real captures.
@@ -98,3 +109,176 @@ A mask must not be tuned to lower a number; here it isolates the finding.
 
 `out/` is regenerated on every run and holds the reports and diff PNGs for all three
 scenarios, including the gray excluded-zone overlay.
+
+---
+
+# Position shift benchmark
+
+```bash
+npm run bench:shifts
+```
+
+The question this answers is not "can it find a shift" but:
+
+> Does position shift detection reduce misleading diffs **without hiding real defects**?
+
+So the benchmark is weighted towards the cases where the answer must be *no*. A detector that
+reports a shift for everything would score 100% on any positive case and be worthless; four of the
+eight synthetic cases and two of the three real captures expect no shift at all.
+
+## Method
+
+**Synthetic** — eight generated cases from [`fixtures/shifts.mjs`](fixtures/shifts.mjs), each
+declaring its own expected answer. Images are drawn from a seeded integer generator, so they are
+byte-identical on every machine, and are written to a temp directory that is removed afterwards.
+Nothing is committed as a binary fixture and nothing depends on the clock or the environment.
+
+Content is built from bars of varying height *and* irregular vertical ticks inside them. Both
+structures are necessary: bars alone pin a vertical offset but leave a horizontal one unconstrained,
+and evenly spaced stripes would be periodic, so a periodic pattern matches at every multiple of its
+period and would hand the detector a wrong offset that scores perfectly.
+
+**Real** — the same three captures as the mask benchmark, plus the reference/clone pair for Duna.
+The benchmark exits non-zero if a positive case is missed, a negative case produces a shift, or a
+delta lands more than 2px from the expected offset.
+
+## Establishing the expected Duna deltas
+
+The expected offsets are **not** whatever the detector reports. They were measured independently,
+by sweeping each 400px band of the page against every candidate offset and recording the similarity
+curve. Three bands behaved differently, and the difference is the whole design of the feature:
+
+| Band (reference y) | Match in place | Best offset | Best match | Peak width | Verdict |
+| --- | ---: | ---: | ---: | --- | --- |
+| 2800–3000 | 57.6% | −56 | 89.8% | 5px | real shift |
+| 9000–9100 | 0.8% | −172 | 96.4% | 49px, contiguous | real shift |
+| 4400–4600 | 99.9% | +12 | 100.0% | 389px | already aligned |
+| 6000–6200 | 96.7% | −116 | 99.0% | 437px, bimodal | already aligned |
+| 8200–8400 | 57.8% | −260 | 100.0% | 149px, at the search edge | flat gradient |
+| 8400–8600 | 39.1% | +208 | 97.8% | 21px on a shallow ramp | false peak |
+
+Every band has *some* offset that scores higher than leaving it alone. Taking the argmax would
+report a −116px shift for content that is already perfectly aligned, and a +208px shift for a
+smooth gradient. What separates the two real shifts is not the height of the peak but its shape —
+a narrow or contiguous single mode, falling off quickly on both sides — and, decisively, whether
+*neighbouring bands independently produce the same offset*. Bands 2800–3800 all report ≈ −58 and
+bands 8800–9319 all report ≈ −156; the false peaks appear once each and are contradicted by their
+neighbours.
+
+That is why consensus between neighbouring windows, not peak height, is the strongest gate in the
+implementation.
+
+The two Duna captures are full-page and differ in total length (9610 vs 9319), which `avd` refuses
+to compare. The benchmark truncates the taller one to a common height, which is exactly what a
+fixed-height capture produces and what exposes the displacement.
+
+## Results
+
+Recorded 2026-09-26 · Node 24.15.0 · macOS arm64.
+
+### Synthetic
+
+| Case | Expected | Detected | Delta error | Confidence | Correct |
+| --- | --- | --- | ---: | ---: | :---: |
+| case1-vertical-plus-20 | `0,20` | `0,20` | 0px | 1.0000 | yes |
+| case2-vertical-plus-100 | `0,100` | `0,100` | 0px | 1.0000 | yes |
+| case3-horizontal-plus-32 | `32,0` | `32,0` | 0px | 0.9193 | yes |
+| case4-diagonal | `15,−25` | `15,−25` | 0px | 1.0000 | yes |
+| case5-content-change | none | none | – | – | yes |
+| case6-shifted-and-modified | none | none | – | – | yes |
+| case7-repeated-cards | none | none | – | – | yes |
+| case8-mask-intersection | `0,30` | `0,30` | 0px | 1.0000 | yes |
+
+### Real captures
+
+| Capture | Shifts | Expected | deltaY | Min confidence | Correct |
+| --- | ---: | ---: | --- | ---: | :---: |
+| Duna desktop 1440x9319 | 2 | 2 | −57, −156 | 0.7855 | yes |
+| Stripe reco 1440x900 | 0 | 0 | – | – | yes |
+| Apple gallery 1440x1000 | 0 | 0 | – | – | yes |
+
+**Duna** — both real displacements found, within 1px and exact, and no false shift in the ~4,300
+rows of bands that are already correct. The −57px run is the section whose height does not match;
+the −156px run is the footer, displaced by a second, later height difference. This is the case the
+feature exists for: 1.8M differing pixels, 71% of them explained by two integers.
+
+**Stripe** — zero shifts, and this is the most important row in the table. The page's largest
+defect is a 1295×153 heading offset sitting on a flat background at 17.4% mismatch. A flat region
+matches at almost any offset, so a naive best-offset search finds a "shift" here that explains
+nothing and would have quietly downgraded a real clone defect. The prominence and consensus gates
+reject it. Sub-pixel text differences on a dark background are likewise left as pixel diffs.
+
+**Apple** — zero shifts. Subtle colour, logo and spacing changes stay pixel diffs, which is the
+correct outcome: they are changes, not displacements.
+
+## Performance
+
+Runtime is machine-dependent and was measured on a heavily loaded host, so treat the absolute
+figures as indicative; the ratios held steady across runs.
+
+| Phase | 1440×9319 (13.4 MP) |
+| --- | --- |
+| PNG decode | ~1.3s |
+| `pixelmatch` | ~0.3s |
+| region labelling + merge | ~2.2s |
+| **shift detection** | **~3.1–3.8s** |
+
+Shift detection roughly doubles a comparison that already costs ~4s on this capture, which is why
+it is opt-in. The synthetic cases each run in 50–400ms. Peak RSS stays under 1GB, dominated by the
+two decoded images rather than by anything the detector allocates.
+
+### Complexity
+
+The search is bounded by construction, and no term grows with image area:
+
+- **Candidate selection** is O(pixels), once, over the diff mask. It reads no image data at all, and
+  a long page produces a handful of bands rather than one per row.
+- **Bands are capped** at 64, taken highest-activity first, so the analysed set is bounded
+  regardless of how fragmented a page is.
+- **Windows are capped** at 400 rows each, and a band always yields at least two, so a short
+  displaced section can still reach consensus.
+- **Per window, the lag sweep is linear in `maxShift`, not in area**: a coarse stride of 4 over
+  ±200px (101 evaluations) locates the basin, then a fine sweep of ±8px (17 evaluations) resolves
+  every integer. Each evaluation costs O(window rows × width / stride²).
+- **Worst case**: 64 bands × ~2 windows × ~152 evaluations. On the 1440-wide Duna page that is
+  ~8×10⁸ sampled pixel comparisons, which is what the ~3.5s above consists of. A 1440×10,000
+  screenshot is the same order as the measured capture, not a new regime.
+- **Memory** is O(pixels) for the two decoded images, plus O(height) for the row-activity array and
+  O(1) per window. Nothing proportional to the search space is ever materialised.
+
+Two things keep this from degrading on awkward input. Windows whose content already matches in
+place above 95% exit before any sweep, and on a real long page that is most of them. And the
+horizontal fallback sweep, which runs for every window whose vertical axis came back empty, is
+capped at ±64px precisely because it is the one pass that would otherwise run everywhere.
+
+## Tuning, and why there are no flags for it
+
+The internals are reachable from `agent-visual-diff/shift` as validated overrides, but the CLI
+exposes only `--detect-shifts`. Two thresholds were checked for sensitivity on the Duna capture,
+and both were flat across a wide range — which is why they are constants and not options:
+
+| Threshold | Range tested | Effect on real verdicts |
+| --- | --- | --- |
+| `MAX_INPLACE_SIMILARITY` | 0.92 – 0.97 | none |
+| `MIN_IMPROVEMENT` | 0.05 – 0.10 | none |
+| `MIN_IMPROVEMENT` | 0.20 | **loses the real −57px shift**, whose windows straddle the edge of the moved run and improve by only 0.20 |
+
+Window height is the one setting that genuinely changes behaviour, and it is not exposed because
+there is no value that is right in general. Splitting bands more finely (≤100px) starts admitting
+false shifts: at 100px the Duna run gains a spurious −143px entry in the flat gradient above the
+footer, and Stripe gains a false positive. At 400px the real page is clean but a short displaced
+section can no longer reach consensus. The implementation therefore splits adaptively — 400px
+windows for a long band, exactly two for a short one — which gets both.
+
+## What this benchmark does not establish
+
+- **One Duna pair, one viewport.** The −57 and −156 offsets come from one reference/clone pair. The
+  mobile captures were not measured, because that pair differs in the *opposite* direction
+  (10155 vs 11896) and would need different handling.
+- **Deltas are verified against band sweeps, not against the DOM.** The benchmark proves the
+  detector recovers the offsets a page actually has. It does not prove the upstream cause is a
+  section height, only that the geometry is consistent with one.
+- **The synthetic cases are drawn, not screenshotted.** They are built to constrain both axes
+  cleanly. Real pages contain antialiasing, subpixel text and video, none of which is represented.
+- **Two pages, three captures, one day.** No false shift was produced on any of them, and the flat
+  gradient and repeated-grid traps were constructed to force one. That is evidence, not proof.
