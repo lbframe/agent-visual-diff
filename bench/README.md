@@ -1,13 +1,14 @@
 # Benchmarks
 
-Two benchmarks, each answering a question that cannot be settled by unit tests.
+Three benchmarks, each answering a question that cannot be settled by unit tests.
 
 ```bash
 npm run bench          # what --mask does to real defects
 npm run bench:shifts   # what --detect-shifts claims, and what it refuses to claim
+npm run bench:presets  # what each sensitivity preset finds, and what it costs
 ```
 
-Both exit non-zero on failure and print Markdown tables.
+All three exit non-zero on failure and print Markdown tables.
 
 # Mask benchmark
 
@@ -282,3 +283,257 @@ windows for a long band, exactly two for a short one — which gets both.
   cleanly. Real pages contain antialiasing, subpixel text and video, none of which is represented.
 - **Two pages, three captures, one day.** No false shift was produced on any of them, and the flat
   gradient and repeated-grid traps were constructed to force one. That is evidence, not proof.
+
+---
+
+# Sensitivity preset benchmark
+
+```bash
+npm run bench:presets
+```
+
+The question is not "which threshold is best" but:
+
+> How much real signal does a profile keep, and how much rendering noise does it remove?
+
+Both halves have to be measured against a known answer, which is why this benchmark has two
+corpora: a synthetic one where the ground truth is complete, and the three real captures where it
+is partial but verified.
+
+## The measurements that decided the values
+
+### 1. `threshold` is squared YIQ distance, not perceptual amplitude
+
+pixelmatch compares `0.5053 · Δ²` against `35215 · threshold²`. For a neutral grey change the
+YIQ distance collapses to the plain channel delta, so a change is reported only when
+`Δ > 264 · threshold`:
+
+| threshold | smallest grey Δ reported |
+| ---: | ---: |
+| 0.15 | 39.6 |
+| 0.10 (default) | 26.4 |
+| 0.05 | 13.2 |
+| 0.03 | 7.9 |
+| 0.01 | 2.6 |
+
+This is why the three profiles are spread over a narrow band of small numbers rather than over
+`0.1 / 0.05 / 0.01`. It also means **there is no value between `0.019` and `0.023`**: below the
+first, a 5/255 flat colour field is visible; above the second, so is a 7/255 antialiasing edge.
+Seeing the first without the second is arithmetically impossible, which is why `strict` is the
+only profile that reports the 5/255 case and why it is also the only one that reports the shadow
+in `case6`.
+
+### 2. `includeAA: false` deletes real defects
+
+The obvious way to reduce antialiasing noise is to leave AA detection off. On this tool that is
+backwards. With `includeAA: false`, pixelmatch drops the anti-aliased pixels of a difference, and
+a text defect survives only as fragments smaller than `minRegionPixels`. Measured on the masked Duna
+capture at `minRegionPixels: 20`, recall of two verified real defects:
+
+| threshold | `includeAA: false` | `includeAA: true` |
+| ---: | ---: | ---: |
+| 0.01 | 5% / 5% | 100% / 100% |
+| 0.03 | 9% / 9% | 100% / 100% |
+| 0.10 | 10% / 6% | 100% / 100% |
+
+So all three presets set `includeAA: true`, including `noisy`. Noise is controlled by
+`minRegionPixels` instead.
+
+### 3. `minRegionPixels` is the noise lever, and 20 is the value
+
+On the synthetic corpus, at threshold 0.01:
+
+| `minRegionPixels` | real defects found | false-positive regions |
+| ---: | ---: | ---: |
+| 2 | 6/6 | 100 |
+| 5 | 6/6 | 41 |
+| 20 | 6/6 | 1 |
+| 40 | 6/6 | 1 |
+
+40 was rejected: it removes nothing further on the synthetic corpus, and on the masked Duna capture
+it costs real-defect recall (100% → 45% for `news-caption`, 100% → 88% for
+`testimonial-caption`).
+
+### 4. `maxRegions` is a real false-negative mechanism, and only `strict` needs it
+
+The default cap of 50 is reached constantly on a long noisy page. On the **unmasked** Duna capture
+at threshold 0.01, `news-caption` recall is:
+
+| `maxRegions` | regions reported | `news-caption` recall | JSON bytes |
+| ---: | ---: | ---: | ---: |
+| 50 (default) | 50 | 69% | 5,543 |
+| 100 | 100 | 100% | 10,606 |
+| 200 | 198 | 100% | 20,213 |
+| 400 | 198 | 100% | 20,213 |
+
+`strict` is the recall profile, so it takes 100. `balanced` and `noisy` already detect the defect
+at 50 and do not carry the extra list length. Worth knowing independently of presets: raising
+`minRegionPixels` can *increase* the region count, because dropping small components first removes
+the low-level bridges that `mergeGap` would otherwise have used to merge large ones together.
+
+### 5. `mergeGap` and `regionPadding` earned no place in a preset
+
+No measured value of either improved any profile, on any corpus. They are in no preset, so a preset
+does not silently pin region geometry under a name that implies the values were chosen.
+
+## Synthetic corpus
+
+Ten cases from [`fixtures/presets.mjs`](fixtures/presets.mjs), drawn from a seeded generator so
+they are byte-identical on every machine. All ten share one identical reference, so a difference
+between two cases is caused by the change under test and not by the content.
+
+Ground truth is declared per case from how the image is *built*, never from comparator output:
+
+| Case | Change | Truth | Differing px | Max Δ |
+| --- | --- | --- | ---: | ---: |
+| `case1-subtle-color` | grey swatch 100 → 105 | signal | 4,800 | 5 |
+| `case2-strong-color` | same swatch 100 → 140 | signal | 4,800 | 40 |
+| `case3-spacing-1px` | hairline card 1px lower | signal | 716 | 36 |
+| `case4-spacing-2px` | same card 2px lower | signal | 1,076 | 36 |
+| `case5-aa-edge-noise` | only AA edge columns resampled | noise | 108 | 7 |
+| `case6-shadow-variance` | same shadow, lighter and shorter | noise | 14,448 | 5 |
+| `case7-structural-block` | 120×120 block removed | signal | 14,400 | 220 |
+| `case8-single-pixel-noise` | 12 isolated pixels, Δ3 | noise | 12 | 3 |
+| `case9-low-level-noise` | 240 isolated + 8 dense speck clusters | noise | 2,908 | 10 |
+| `case10-defect-plus-noise` | `case7` plus `case9` | mixed | 17,285 | 225 |
+
+Two construction choices are load-bearing and were corrected during development, so they are worth
+stating. `case3`/`case4` shift a **low-contrast** card: a 1px shift of a saturated panel against a
+white page is a Δ192 edge that every threshold sees trivially, and the case would have proved
+nothing. And `case6` is the same Δ5 amplitude as `case1` while being the opposite truth, because
+one is a flat colour field and the other is a soft gradient edge — ground truth cannot be read off
+amplitude, which is the whole reason presets are a judgement about context rather than a number.
+
+### Results
+
+| Case | Truth | default | `strict` | `balanced` | `noisy` |
+| --- | ---: | --- | --- | --- | --- |
+| `case1-subtle-color` | signal | miss | **detect** | miss | miss |
+| `case2-strong-color` | signal | detect | detect | detect | detect |
+| `case3-spacing-1px` | signal | detect | detect | detect | detect |
+| `case4-spacing-2px` | signal | detect | detect | detect | detect |
+| `case5-aa-edge-noise` | noise | clean | clean | clean | clean |
+| `case6-shadow-variance` | noise | clean | 1 region | clean | clean |
+| `case7-structural-block` | signal | detect | detect | detect | detect |
+| `case8-single-pixel-noise` | noise | clean | clean | clean | clean |
+| `case9-low-level-noise` | noise | clean | clean | clean | clean |
+| `case10-defect-plus-noise` | mixed | detect | detect | detect | detect |
+
+| Profile | Real defects found | Missed | False-positive regions | False-positive px |
+| --- | ---: | ---: | ---: | ---: |
+| default | 5/6 | 1 | 0 | 0 |
+| `strict` | 6/6 | 0 | 1 | 8,944 |
+| `balanced` | 5/6 | 1 | 0 | 0 |
+| `noisy` | 5/6 | 1 | 0 | 0 |
+
+`strict`'s single false positive is `case6`, the 8,944-pixel soft shadow. It is the direct,
+unavoidable cost of a threshold low enough to see a 5/255 colour field: the shadow moves by the
+same 5/255. It is one region on the whole corpus, not a scattering.
+
+`case8` deserves a note. Twelve isolated single-pixel changes are noise, and the correct answer is
+**zero regions at every profile** — a 1px region is not actionable, and the only way to report one
+would be `minRegionPixels: 1`. `diffPixels` still reports the honest 12. Zero regions with a
+non-zero `diffPixels` is a meaningful result, not a contradiction.
+
+## Real captures
+
+Ground truth here is deliberately partial, so the scoring is *recall on verified design
+differences*, not false-positive counting. Each rectangle was established outside `avd`: the Apple
+ones by sampling both PNGs and reading the crops side by side, the Stripe one from a displacement
+visible in the crop, the Duna ones from text blocks present in one capture and absent in the
+other.
+
+| Rectangle | What it is |
+| --- | --- |
+| Apple `headline-bg-tone` | Reference `#f5f5f7` against a pure white clone, Δ10 across the full width |
+| Apple `headline-metrics` | The headline glyphs sit at a different size and position |
+| Apple `stream-now-pill` | The "Stream now" CTA is a different size and offset |
+| Apple `hero-image-tone` | The hero photo is Δ7–19 lighter in the clone |
+| Stripe `hero-heading-offset` | The hero heading card, displaced downwards — the clone's one large defect |
+| Duna `news-caption` | A static text block present in one capture and absent in the other |
+| Duna `testimonial-caption` | The same, above the testimonial carousel |
+
+### Verified design defects found
+
+| Capture | Mode | default | `strict` | `balanced` | `noisy` |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Apple gallery | masked | 2/4 | **4/4** | **4/4** | 2/4 |
+| Apple gallery | plain | 2/4 | **4/4** | **4/4** | 2/4 |
+| Stripe reco | masked | 1/1 | 1/1 | 1/1 | 1/1 |
+| Stripe reco | plain | 1/1 | 1/1 | 1/1 | 1/1 |
+| Duna desktop | masked | 2/2 | 2/2 | 2/2 | 2/2 |
+| Duna desktop | plain | 1/2 | **2/2** | **2/2** | **2/2** |
+
+### Reported difference
+
+| Capture | Mode | default | `strict` | `balanced` | `noisy` |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Apple gallery | masked | 0.8217% | 38.5915% | 32.5389% | 1.3962% |
+| Apple gallery | plain | 19.1749% | 59.3181% | 53.4172% | 20.2431% |
+| Stripe reco | masked | 15.1402% | 30.7654% | 21.2241% | 17.4404% |
+| Stripe reco | plain | 12.7301% | 34.5920% | 22.3160% | 15.3583% |
+| Duna desktop | masked | 0.3207% | 1.3113% | 1.1618% | 0.6557% |
+| Duna desktop | plain | 3.5856% | 12.4756% | 11.5843% | 4.3764% |
+
+**Apple** is the case that separates the profiles, and the numbers are large because the page
+genuinely is: 83% of its pixels differ from the reference, most of them by Δ1–19. The default
+threshold reports 0.82% of the masked viewport and finds 2 of 4 verified differences.
+`balanced` reports 32.5% and finds all 4, including the Δ10 background tone that the default
+cannot see at all. `noisy` reports 1.40% and finds 2 — it keeps the heading metrics and the CTA
+pill, and drops both tone differences, which is the trade its name advertises.
+
+**Stripe** is the case that shows `noisy` earning its place. The heading offset is a real clone
+defect and every profile finds it at 100% recall. But `noisy` reports 17.4% against
+`balanced`'s 21.2% and `strict`'s 30.8% on the identical pair, dropping the sub-pixel text noise
+around it without touching the defect.
+
+**Duna** is the case that shows the cost of a long page. The default threshold **misses**
+`news-caption` outright on the unmasked capture (0% recall) — it is crowded out of a 50-region
+list by larger, noisier regions. All three presets find it, and `strict`'s `maxRegions: 100` takes
+its recall from 69% to 100%.
+
+## Interaction with shift detection
+
+A sensitivity profile changes the pixel diff. It must not change what the shift classifier
+concludes. On the Duna reference/clone pair the established answer is two shifts, at −57 and −156:
+
+| Profile | Shifts | `deltaY` | Min confidence |
+| --- | ---: | --- | ---: |
+| default | 2 | −57, −156 | 0.7855 |
+| `strict` | 2 | −57, −156 | 0.7855 |
+| `balanced` | 2 | −57, −156 | 0.7855 |
+| `noisy` | 2 | −57, −156 | 0.7855 |
+
+Identical verdicts at identical confidence. Preset thresholds are not reused inside the classifier,
+and the test suite asserts the same thing on a synthetic shift and a synthetic non-shift.
+
+## Assertions
+
+The benchmark exits non-zero if any of these stops holding, so a preset value cannot be changed
+without the evidence following it:
+
+- every profile finds every structural and spacing defect
+- every profile reports no false positive on the pure-noise cases (`case6` excepted for `strict`,
+  which is the documented cost of its threshold)
+- `strict` finds the 5/255 colour field
+- no profile loses a verified design defect that the default finds
+- every profile reaches the same position shift verdicts
+- every profile is byte-reproducible on every case
+
+## What this benchmark does not establish
+
+- **There is no clean-page noise floor in the available captures.** All six Duna `section-N-t*`
+  sets drift 34–57% between captures taken seconds apart, so none of them is a stable page to
+  measure "how much noise does a profile admit when nothing changed" against. The number that
+  would best separate `balanced` from `noisy` therefore does not exist in this fixture set, and
+  their separation rests on the synthetic corpus plus recall on the real captures. Two captures of
+  a genuinely static page would settle it.
+- **The synthetic cases are drawn, not screenshotted.** They are built to constrain one variable at
+  a time. Real pages contain subpixel text, video and JPEG artefacts, none of which is
+  represented — and the `includeAA` result above is precisely a case where the synthetic corpus
+  and the real capture disagreed, with the real capture winning.
+- **The real ground truth is partial by choice.** Recall of 4/4 means four verified differences
+  were found; it does not mean nothing else differs. On the Apple capture a great deal else
+  differs.
+- **Three captures, one day, one viewport each.** No mobile capture was measured. The Duna mobile
+  pair differs in the opposite direction to its desktop pair and would need separate handling.

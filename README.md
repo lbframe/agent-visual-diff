@@ -174,6 +174,62 @@ Masking is only as honest as the mask. Keep zones tight around genuinely dynamic
 never widen a mask just to make a run go green — the
 [benchmark](bench/README.md) shows what a mask does to real defects when it does.
 
+## Sensitivity presets
+
+Six comparison options interact, and the defaults are tuned for a page that did not change. When
+you *know* what kind of difference you are looking for, name it instead of tuning numbers by hand:
+
+```bash
+avd compare reference.png actual.png --preset balanced
+```
+
+| Preset | For | threshold | includeAA | minRegionPixels | maxRegions |
+| --- | --- | ---: | :---: | ---: | ---: |
+| `strict` | fidelity over noise — colour, spacing, background tone, static screenshots | 0.01 | true | 20 | 100 |
+| `balanced` | the recommended general profile | 0.03 | true | 20 | 50 |
+| `noisy` | captures with expected rendering variation — font AA, shadows, animation residue | 0.1 | true | 20 | 50 |
+
+A preset only supplies defaults. **An explicit option always wins:**
+
+```bash
+avd compare a.png b.png --preset balanced --threshold 0.05   # threshold 0.05, everything else from balanced
+```
+
+```js
+comparePngFiles({ expected, actual, preset: 'balanced', threshold: 0.05 })
+```
+
+Without `--preset` the comparison is exactly what it has always been — same settings, same bytes.
+An unknown name is an error, not a silent fallback:
+
+```console
+$ avd compare a.png b.png --preset ultra
+avd: unknown preset: "ultra" (expected one of: strict, balanced, noisy)
+```
+
+### Why the numbers are not the obvious ones
+
+`threshold` is a squared YIQ distance, not a perceptual amount. pixelmatch compares
+`0.5053 · Δ²` against `35215 · threshold²`, so a neutral grey change is only reported when
+`Δ > 264 · threshold`. At the default `0.1` that is `Δ > 26.4`, which is why a deliberate 5/255
+colour-token change and a 10/255 background tone are both invisible by default. Every preset value
+here sits far below `0.1` for that reason, and `strict` needs `0.01` — not the `0.03` that looks
+sensible — to see a 5/255 field at all.
+
+`includeAA: true` is in **all three** presets, including `noisy`, which is the opposite of the
+intuitive choice. With AA detection off, pixelmatch drops the anti-aliased pixels of a difference,
+and a text defect survives only as fragments smaller than `minRegionPixels`. On the Duna capture,
+`includeAA: false` with `minRegionPixels: 20` drops two verified real defects from 100% recall to
+5–10% at *every* threshold tested. Turning antialiasing detection off does not reduce noise here; it
+deletes real defects. Noise is controlled by `minRegionPixels` instead.
+
+`mergeGap` and `regionPadding` are in no preset: no measured value of either improved any profile,
+so pinning them would only freeze today's defaults under a name that claims they were chosen.
+
+Every number above is produced by `npm run bench:presets`, and
+[the benchmark write-up](bench/README.md#sensitivity-preset-benchmark) records the measurements
+each one rests on. If you change a value, re-run it.
+
 ## Position shift detection
 
 On a long page, one wrong section height moves everything below it. The content is correct; it
@@ -267,6 +323,7 @@ JSON is still emitted on exit code `2`, so the failed run keeps its evidence.
 --out <report.json>
 --diff <diff.png>
 --section <name>
+--preset <name>
 --threshold <0..1>
 --include-aa
 --min-region-pixels <n>
@@ -328,6 +385,7 @@ const report = comparePngFiles({
   actual: 'actual.png',
   diffPng: '.avd/diff.png',
   section: 'homepage',
+  preset: 'balanced',
   threshold: 0.1,
   minRegionPixels: 3,
   mergeGap: 6,
@@ -338,9 +396,17 @@ const report = comparePngFiles({
 });
 ```
 
+`preset` is one of `strict`, `balanced` or `noisy`; anything else throws. Every comparison option
+you pass wins over the preset's value, and any option you leave out falls back to the preset, and
+then to the default. `preset` defaults to `null`, which resolves to the v0.1 defaults.
+
 `detectShifts` defaults to `false`. Omit it — or pass `false` — and the report is identical to
 what this API produced before the option existed: neither `shifts` nor `settings.detectShifts`
-appears, so treat `shifts` as present if and only if `settings.detectShifts` is `true`.
+appears, so treat `shifts` as present if and only if `settings.detectShifts` is `true`. The same
+holds for `preset`: a top-level `preset` key appears if and only if a preset was requested, and
+`settings` always carries the values that actually ran.
+
+Preset names and their resolved values are also exported from `agent-visual-diff/presets`.
 
 Region primitives are also exported from `agent-visual-diff/regions`, mask helpers
 (`readMaskFile`, `parseIgnoreSpec`, `clampRegions`, `buildIgnoreMask`) from `agent-visual-diff/mask`,
