@@ -45,6 +45,10 @@ Captures come from the clone repos' `docs/design-references/` folders, outside t
 Every path is overridable: `AVD_BENCH_DUNA_A`, `AVD_BENCH_DUNA_B`, `AVD_BENCH_STRIPE_A`,
 `AVD_BENCH_STRIPE_B`, `AVD_BENCH_APPLE_A`, `AVD_BENCH_APPLE_B`, `AVD_BENCH_OUT`.
 
+The defaults resolve under the clone-repo workspace in the user's home directory (`~/lab/…`).
+To keep the captures somewhere else, point the per-site root at it instead of each file
+individually: `AVD_BENCH_DUNA_ROOT`, `AVD_BENCH_STRIPE_ROOT`, `AVD_BENCH_APPLE_ROOT`.
+
 Comparisons use the same settings as the original QA reviews: `includeAA true`,
 `mergeGap 10`, `regionPadding 2`, `minRegionPixels 20` (10 for Apple).
 

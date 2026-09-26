@@ -53,14 +53,27 @@ const PROFILES = [
   ...PRESET_NAMES.map(name => ({ name, preset: name }))
 ];
 
+/**
+ * Where each site's captures live.
+ *
+ * The default is the clone-repo workspace under the user's home directory, which
+ * is where these captures were produced. A machine that keeps them elsewhere
+ * points the matching AVD_BENCH_*_ROOT at its own checkout; no absolute path is
+ * baked into the repository. See bench/README.md.
+ */
+const appleRoot = process.env.AVD_BENCH_APPLE_ROOT
+  ?? path.join(os.homedir(), 'lab/apple/ai-website-cloner-template/docs/design-references/apple-com-736d3707/spacing-review-2026-09-25');
+const stripeRoot = process.env.AVD_BENCH_STRIPE_ROOT
+  ?? path.join(os.homedir(), 'lab/stripe/docs/design-references/stripe-com-9ababc9a/root-8a5edab2');
+const dunaRoot = process.env.AVD_BENCH_DUNA_ROOT
+  ?? path.join(os.homedir(), 'lab/ai-website-cloner/docs/design-references/duna-com-7c5a0f0d/root-8a5edab2');
+
 const SITES = [
   {
     key: 'apple',
     label: 'Apple gallery 1440x1000',
-    expected: process.env.AVD_BENCH_APPLE_A
-      ?? '/Users/leonardoballand/lab/apple/ai-website-cloner-template/docs/design-references/apple-com-736d3707/spacing-review-2026-09-25/reference-desktop-gallery-1440x1000.png',
-    actual: process.env.AVD_BENCH_APPLE_B
-      ?? '/Users/leonardoballand/lab/apple/ai-website-cloner-template/docs/design-references/apple-com-736d3707/spacing-review-2026-09-25/clone-desktop-gallery-1440x1000.png',
+    expected: process.env.AVD_BENCH_APPLE_A ?? path.join(appleRoot, 'reference-desktop-gallery-1440x1000.png'),
+    actual: process.env.AVD_BENCH_APPLE_B ?? path.join(appleRoot, 'clone-desktop-gallery-1440x1000.png'),
     mask: path.join(here, 'masks', 'apple-gallery.json'),
     truth: [
       // The headline band: reference #f5f5f7 against a pure white clone, a
@@ -75,10 +88,8 @@ const SITES = [
   {
     key: 'stripe',
     label: 'Stripe reco 1440x900',
-    expected: process.env.AVD_BENCH_STRIPE_A
-      ?? '/Users/leonardoballand/lab/stripe/docs/design-references/stripe-com-9ababc9a/root-8a5edab2/reco-desktop.png',
-    actual: process.env.AVD_BENCH_STRIPE_B
-      ?? '/Users/leonardoballand/lab/stripe/docs/design-references/stripe-com-9ababc9a/root-8a5edab2/reco-clone-typed.png',
+    expected: process.env.AVD_BENCH_STRIPE_A ?? path.join(stripeRoot, 'reco-desktop.png'),
+    actual: process.env.AVD_BENCH_STRIPE_B ?? path.join(stripeRoot, 'reco-clone-typed.png'),
     mask: path.join(here, 'masks', 'stripe-reco.json'),
     // The clone's one large defect: the hero heading card, displaced downwards.
     truth: [{ name: 'hero-heading-offset', x: 102, y: 747, w: 1295, h: 153 }]
@@ -86,10 +97,8 @@ const SITES = [
   {
     key: 'duna',
     label: 'Duna desktop 1440x9610',
-    expected: process.env.AVD_BENCH_DUNA_A
-      ?? '/Users/leonardoballand/lab/ai-website-cloner/docs/design-references/duna-com-7c5a0f0d/root-8a5edab2/desktop-full.png',
-    actual: process.env.AVD_BENCH_DUNA_B
-      ?? '/Users/leonardoballand/lab/ai-website-cloner/docs/design-references/duna-com-7c5a0f0d/root-8a5edab2/desktop-full-hydrated.png',
+    expected: process.env.AVD_BENCH_DUNA_A ?? path.join(dunaRoot, 'desktop-full.png'),
+    actual: process.env.AVD_BENCH_DUNA_B ?? path.join(dunaRoot, 'desktop-full-hydrated.png'),
     mask: path.join(here, 'masks', 'duna-desktop.json'),
     // Two static text blocks that exist in one capture and not the other, both
     // outside every mask zone.
