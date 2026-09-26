@@ -443,12 +443,14 @@ npm test
 npm run check
 npm run bench
 npm run bench:shifts
+npm run bench:presets
 npm run pack:dry
 ```
 
 `npm run bench` replays the mask benchmark against real page captures. `npm run bench:shifts`
 replays the position shift benchmark: eight generated cases with known answers, then the Duna,
-Stripe and Apple captures. Both exit non-zero on failure. See
+Stripe and Apple captures. `npm run bench:presets` replays the sensitivity preset benchmark. All
+three exit non-zero on failure. See
 [bench/README.md](bench/README.md) for the fixtures and the recorded numbers.
 
 Test the exact package artifact before publishing:
