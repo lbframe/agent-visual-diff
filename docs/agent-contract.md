@@ -75,9 +75,11 @@ Contract:
 - Regions are validated identically whether they come from `--mask`, `--ignore`, or are passed
   straight to `comparePngFiles({ mask })`: `x`/`y` integers `>= 0`, `w`/`h` integers `> 0`,
   `name` a non-empty string when present, no unknown keys.
-- Out-of-range coordinates are rejected, not clamped. A negative index would rasterize into the
+- Negative `x` or `y` coordinates are rejected. A negative index would rasterize into the
   previous scanline and report a pixel count nobody asked for.
-- Regions are then clamped to the viewport; one entirely outside it is a hard error.
+- A region that starts inside the viewport but extends beyond its right or bottom edge is
+  clamped to the viewport.
+- A region that lies entirely outside the viewport is rejected.
 - Overlapping regions are unioned; `ignoredPixels` counts each pixel once.
 - An unnamed region is reported as `region-<n>`, 1-based, in declaration order.
 - Regions from `--mask` come first, then `--ignore` specs in command-line order.
