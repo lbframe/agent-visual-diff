@@ -58,6 +58,56 @@ No counted pixel ever falls inside an ignored region. A region's *bounding box* 
 overlap an ignored zone, because `mergeGap` and `regionPadding` expand boxes after labelling.
 `px` remains exact; only the box is generous.
 
+## Sensitivity presets
+
+A preset is a named set of comparison settings. It changes which differences are counted, and
+therefore `diffPixels`, `diffRatio` and `regions` — but it changes nothing about what those fields
+*mean*. Masking, region ordering, the `1 - diffRatio` relationship and the exit codes are
+identical under every preset.
+
+| Preset | For |
+| --- | --- |
+| `strict` | Fidelity over noise: colour, spacing, background tone, static screenshots |
+| `balanced` | The recommended general profile |
+| `noisy` | Captures with expected rendering variation: font AA, shadows, animation residue |
+
+```json
+{
+  "preset": "balanced",
+  "settings": {
+    "threshold": 0.03,
+    "includeAA": true,
+    "minRegionPixels": 20,
+    "mergeGap": 6,
+    "regionPadding": 2,
+    "maxRegions": 50,
+    "mask": null
+  }
+}
+```
+
+Contract:
+
+- `preset` is one of `strict`, `balanced`, `noisy`. Any other value is an error on both the CLI
+  (exit `1`) and the API (throws). A typo never falls back to the default sensitivity.
+- A top-level `preset` key appears **if and only if** a preset was requested. With no preset the
+  key is absent, and a run produces byte-identical JSON to the same run before presets existed.
+- `settings` is always present and always carries the values that actually ran. **Read
+  `settings`, not the preset name**, if you need to know the effective configuration: a preset can
+  be overridden per option, so the name alone does not describe the run.
+- Precedence is **explicit option, then preset, then the v0.1 default.** `--preset balanced
+  --threshold 0.05` runs at `threshold: 0.05` with everything else from `balanced`. The same holds
+  on the API. An option is "explicit" when it is present and not `undefined`, so `threshold: 0` and
+  `includeAA: false` are honoured.
+- Presets never touch shift detection. `--detect-shifts` keeps its own classifier and its verdicts
+  are identical with and without a preset; see the shift section below.
+- `diffPixels` stays the honest raw count. A preset may deliberately filter out every *region*
+  while still reporting the changed pixels, because `minRegionPixels` acts on regions only. Zero
+  regions with a non-zero `diffPixels` is a meaningful result, not a contradiction.
+
+`schemaVersion` is unchanged at `2`. Preset metadata is purely additive and flag-gated, so a
+consumer that ignores `preset` cannot tell the difference.
+
 ## Ignored regions
 
 ```json
@@ -165,6 +215,12 @@ Look for the section immediately above it and compare its height.
 A shift is evidence, not semantic truth. It says the pixels below a point moved together by a
 constant amount. It does not say why, and the reported span can include rows that did not move,
 since the span is bounded by the evidence rather than by the true extent of the displacement.
+
+A sensitivity preset does not change any of this. It changes which pixels are in the diff mask the
+detector reads, but not the gates, the prominence test or the consensus requirement. Measured on the
+Duna reference/clone pair, all three presets and the unflagged default reach the identical verdict:
+two shifts, at `deltaY` −57 and −156, at the same minimum confidence. `strict` additionally raises
+`maxRegions` to 100, which lengthens the region list and does not touch the shift span.
 
 `confidence` summarises how strongly the evidence cleared each internal gate. It is a strength
 score, not a probability: `0.84` does not mean an 84% chance of any particular layout cause.

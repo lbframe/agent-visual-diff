@@ -26,12 +26,31 @@ Artifacts:
   --section <name>              stable logical screen/section name
 
 Comparison:
+  --preset <name>               sensitivity profile: strict, balanced, noisy
   --threshold <0..1>            pixelmatch threshold (default: 0.1)
   --include-aa                  include anti-aliased pixels
   --min-region-pixels <n>       discard tiny components (default: 2)
   --merge-gap <px>              merge nearby components (default: 6)
   --region-padding <px>         expand final boxes (default: 2)
   --max-regions <n>             cap reported regions (default: 50)
+
+  Sensitivity presets:
+    strict    fidelity over noise. Use when small deliberate differences
+              matter: colour, spacing, background tone, static screenshots.
+    balanced  recommended general profile. Finds the subtle differences a
+              default comparison misses, at a far lower diff ratio than strict.
+    noisy     for captures with expected rendering variation: font AA,
+              shadows, animation residue, cross-platform rasteriser drift.
+
+    A preset only supplies defaults. An explicit option always wins:
+
+      avd compare a.png b.png --preset balanced --threshold 0.05
+
+    Without --preset the comparison is exactly what it has always been.
+
+  Note: presets keep antialiased pixels in the diff. Turning AA detection off
+  does not reduce noise on real pages, it deletes text defects: on the Duna
+  capture it drops two verified real defects from 100% recall to 5-10%.
 
 Masks (exclude known-dynamic or irrelevant regions from the comparison):
   --mask <file.json>            read regions from a JSON mask file
@@ -102,7 +121,7 @@ function parse(argv) {
   const booleanFlags = new Set(['--include-aa', '--json', '--compact', '--detect-shifts']);
   const multiValueFlags = new Set(['--ignore']);
   const valueFlags = new Set([
-    '--out', '--diff', '--section', '--threshold', '--min-region-pixels',
+    '--out', '--diff', '--section', '--preset', '--threshold', '--min-region-pixels',
     '--merge-gap', '--region-padding', '--max-regions', '--fail-above', '--mask'
   ]);
 
@@ -211,15 +230,19 @@ try {
   const compact = Boolean(a.compact);
   const jsonMode = Boolean(a.json || compact);
 
-  const threshold = a.threshold == null ? 0.1 : parseNumber('--threshold', a.threshold, { min: 0, max: 1 });
-  const minRegionPixels = a['min-region-pixels'] == null ? 2 : parseNumber('--min-region-pixels', a['min-region-pixels'], { min: 1, integer: true });
-  const mergeGap = a['merge-gap'] == null ? 6 : parseNumber('--merge-gap', a['merge-gap'], { min: 0, integer: true });
-  const regionPadding = a['region-padding'] == null ? 2 : parseNumber('--region-padding', a['region-padding'], { min: 0, integer: true });
-  const maxRegions = a['max-regions'] == null ? 50 : parseNumber('--max-regions', a['max-regions'], { min: 1, integer: true });
-  const failAbove = a['fail-above'] == null ? null : parseNumber('--fail-above', a['fail-above'], { min: 0, max: 1 });
-
   const { comparePngFiles } = await import('./compare.js');
   const { readMaskFile, parseIgnoreSpec } = await import('./mask.js');
+  const { assertPresetName } = await import('./presets.js');
+
+  // Only forward what was actually typed. Passing the defaults through would
+  // make every default an explicit override and silently defeat --preset.
+  const preset = a.preset == null ? null : assertPresetName(a.preset);
+  const threshold = a.threshold == null ? undefined : parseNumber('--threshold', a.threshold, { min: 0, max: 1 });
+  const minRegionPixels = a['min-region-pixels'] == null ? undefined : parseNumber('--min-region-pixels', a['min-region-pixels'], { min: 1, integer: true });
+  const mergeGap = a['merge-gap'] == null ? undefined : parseNumber('--merge-gap', a['merge-gap'], { min: 0, integer: true });
+  const regionPadding = a['region-padding'] == null ? undefined : parseNumber('--region-padding', a['region-padding'], { min: 0, integer: true });
+  const maxRegions = a['max-regions'] == null ? undefined : parseNumber('--max-regions', a['max-regions'], { min: 1, integer: true });
+  const failAbove = a['fail-above'] == null ? null : parseNumber('--fail-above', a['fail-above'], { min: 0, max: 1 });
 
   const mask = a.mask ? readMaskFile(a.mask) : [];
   const ignore = (a.ignore ?? []).map((spec, index) => parseIgnoreSpec(spec, `inline-${index + 1}`));
@@ -229,8 +252,9 @@ try {
     actual: parsed.actual,
     diffPng: a.diff,
     section: a.section,
+    preset,
     threshold,
-    includeAA: Boolean(a['include-aa']),
+    includeAA: a['include-aa'] ? true : undefined,
     minRegionPixels,
     mergeGap,
     regionPadding,

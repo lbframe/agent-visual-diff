@@ -5,6 +5,7 @@ import { PNG } from 'pngjs';
 import { connectedComponents, mergeRegions, padAndClampRegions, sortRegions } from './regions.js';
 import { buildIgnoreMask, clampRegions, paintIgnoredOverlay } from './mask.js';
 import { detectPositionShifts } from './shift.js';
+import { resolveSettings } from './presets.js';
 
 function readPng(file) {
   return PNG.sync.read(fs.readFileSync(file));
@@ -15,22 +16,34 @@ function round(value, digits = 4) {
   return Math.round(value * p) / p;
 }
 
+/**
+ * Compare two PNGs.
+ *
+ * `preset` names a sensitivity profile from `./presets.js`. Every comparison
+ * option left `undefined` falls back to the preset, and to the v0.1 defaults
+ * when there is no preset, so an explicit option always wins over a preset
+ * value. Options are detected by being `undefined` rather than by a sentinel,
+ * which is why a caller can pass `threshold: 0` and mean it.
+ */
 export function comparePngFiles({
   expected,
   actual,
   diffPng,
   section = path.basename(actual, path.extname(actual)),
-  threshold = 0.1,
-  includeAA = false,
-  minRegionPixels = 2,
-  mergeGap = 6,
-  regionPadding = 2,
-  maxRegions = 50,
+  preset = null,
+  threshold,
+  includeAA,
+  minRegionPixels,
+  mergeGap,
+  regionPadding,
+  maxRegions,
   mask = [],
   ignore = [],
   maskFile = null,
   detectShifts = false
 }) {
+  const settings = resolveSettings({ preset, threshold, includeAA, minRegionPixels, mergeGap, regionPadding, maxRegions });
+
   const a = readPng(expected);
   const b = readPng(actual);
   if (a.width !== b.width || a.height !== b.height) {
@@ -40,8 +53,8 @@ export function comparePngFiles({
   const { width, height } = a;
   const diff = new PNG({ width, height });
   pixelmatch(a.data, b.data, diff.data, width, height, {
-    threshold,
-    includeAA,
+    threshold: settings.threshold,
+    includeAA: settings.includeAA,
     diffMask: true,
     diffColor: [255, 0, 0],
     alpha: 1
@@ -65,10 +78,10 @@ export function comparePngFiles({
     }
   }
 
-  let regions = connectedComponents(diffMask, width, height, minRegionPixels);
-  regions = mergeRegions(regions, mergeGap);
-  regions = padAndClampRegions(regions, width, height, regionPadding);
-  regions = sortRegions(regions).slice(0, maxRegions).map((r, index) => ({
+  let regions = connectedComponents(diffMask, width, height, settings.minRegionPixels);
+  regions = mergeRegions(regions, settings.mergeGap);
+  regions = padAndClampRegions(regions, width, height, settings.regionPadding);
+  regions = sortRegions(regions).slice(0, settings.maxRegions).map((r, index) => ({
     id: index + 1,
     ...r,
     area: r.w * r.h,
@@ -106,7 +119,20 @@ export function comparePngFiles({
     ignoredRegions,
     regions,
     diffPng: diffPng ?? null,
-    settings: { threshold, includeAA, minRegionPixels, mergeGap, regionPadding, maxRegions, mask: maskFile }
+    // `preset` appears only when one was asked for, so a run without the flag
+    // serialises to exactly the bytes it always did. `settings` below already
+    // carries the values that actually ran, which is what makes the two
+    // together enough for an agent to know what it got.
+    ...(preset ? { preset } : {}),
+    settings: {
+      threshold: settings.threshold,
+      includeAA: settings.includeAA,
+      minRegionPixels: settings.minRegionPixels,
+      mergeGap: settings.mergeGap,
+      regionPadding: settings.regionPadding,
+      maxRegions: settings.maxRegions,
+      mask: maskFile
+    }
   };
 
   // `shifts` and `settings.detectShifts` appear only when asked for, so a run
