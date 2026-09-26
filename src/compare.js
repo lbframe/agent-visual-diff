@@ -4,6 +4,7 @@ import pixelmatch from 'pixelmatch';
 import { PNG } from 'pngjs';
 import { connectedComponents, mergeRegions, padAndClampRegions, sortRegions } from './regions.js';
 import { buildIgnoreMask, clampRegions, paintIgnoredOverlay } from './mask.js';
+import { detectPositionShifts } from './shift.js';
 
 function readPng(file) {
   return PNG.sync.read(fs.readFileSync(file));
@@ -27,7 +28,8 @@ export function comparePngFiles({
   maxRegions = 50,
   mask = [],
   ignore = [],
-  maskFile = null
+  maskFile = null,
+  detectShifts = false
 }) {
   const a = readPng(expected);
   const b = readPng(actual);
@@ -76,13 +78,20 @@ export function comparePngFiles({
 
   const diffRatio = diffPixels / evaluatedPixels;
 
+  // Shift detection reads the diff mask and the ignore mask that were just
+  // built, so it inherits masking for free: an ignored pixel can neither open
+  // a candidate nor be re-matched at a translated destination.
+  const detected = detectShifts
+    ? detectPositionShifts({ a, b, diffMask, ignoreMask: ignoredPixels > 0 ? ignoreMask : null, width, height })
+    : null;
+
   paintIgnoredOverlay(diff.data, ignoreMask);
   if (diffPng) {
     fs.mkdirSync(path.dirname(diffPng), { recursive: true });
     fs.writeFileSync(diffPng, PNG.sync.write(diff));
   }
 
-  return {
+  const report = {
     schemaVersion: 2,
     section,
     viewport: `${width}x${height}`,
@@ -99,4 +108,13 @@ export function comparePngFiles({
     diffPng: diffPng ?? null,
     settings: { threshold, includeAA, minRegionPixels, mergeGap, regionPadding, maxRegions, mask: maskFile }
   };
+
+  // `shifts` and `settings.detectShifts` appear only when asked for, so a run
+  // without the flag serialises to exactly the bytes it always did.
+  if (detected) {
+    report.shifts = detected.shifts;
+    report.settings.detectShifts = true;
+  }
+
+  return report;
 }

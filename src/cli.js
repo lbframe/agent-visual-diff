@@ -46,6 +46,22 @@ Masks (exclude known-dynamic or irrelevant regions from the comparison):
 
   Regions are clamped to the viewport; a zone entirely outside it is an error.
 
+Position shifts (opt-in, off by default):
+  --detect-shifts               report content that moved instead of changed
+
+  Adds a top-level "shifts" array. Each entry is a run of content that is
+  visually correct but displaced by a constant offset, which usually means an
+  upstream section has the wrong height:
+
+    { "id": 1, "type": "position-shift", "x": 0, "y": 2685,
+      "w": 1440, "h": 1026, "deltaX": 0, "deltaY": -57, "confidence": 0.8385 }
+
+  The classifier is deliberately conservative: a shift is reported only when
+  translation explains the region better than leaving it in place, by a
+  decisive and repeatable margin across neighbouring bands. Anything ambiguous
+  stays a normal pixel-diff region. Treat a shift as evidence of an upstream
+  layout cause, not as proof of one, and do not fix the moved regions one by one.
+
 CI:
   --fail-above <ratio>          exit 2 when diffRatio exceeds ratio
                                 example: 0.01 = more than 1% changed
@@ -83,7 +99,7 @@ function parse(argv) {
   if (args[0] === 'compare') args.shift();
 
   const positional = [];
-  const booleanFlags = new Set(['--include-aa', '--json', '--compact']);
+  const booleanFlags = new Set(['--include-aa', '--json', '--compact', '--detect-shifts']);
   const multiValueFlags = new Set(['--ignore']);
   const valueFlags = new Set([
     '--out', '--diff', '--section', '--threshold', '--min-region-pixels',
@@ -140,12 +156,26 @@ function humanSummary(report, outPath) {
     );
   }
 
+  if (report.shifts?.length) {
+    lines.push(
+      `Position shifts: ${report.shifts.length} (look for an upstream height or spacing cause, ` +
+      'not one fix per region)'
+    );
+  }
+
   if (report.regions.length) {
     lines.push('');
     for (const r of report.regions.slice(0, 10)) {
       lines.push(`#${r.id}  x=${r.x} y=${r.y}  ${r.w}x${r.h}  ${r.px}px`);
     }
     if (report.regions.length > 10) lines.push(`… ${report.regions.length - 10} more region(s)`);
+  }
+
+  if (report.shifts?.length) {
+    lines.push('');
+    for (const s of report.shifts) {
+      lines.push(`^${s.id}  y=${s.y}  ${s.w}x${s.h}  dx=${s.deltaX} dy=${s.deltaY}  conf=${s.confidence}`);
+    }
   }
 
   if (report.ignoredRegions.length) {
@@ -207,7 +237,8 @@ try {
     maxRegions,
     mask,
     ignore,
-    maskFile: a.mask ?? null
+    maskFile: a.mask ?? null,
+    detectShifts: Boolean(a['detect-shifts'])
   });
 
   const json = `${JSON.stringify(report, null, compact ? 0 : 2)}\n`;

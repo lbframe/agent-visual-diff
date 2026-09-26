@@ -174,6 +174,71 @@ Masking is only as honest as the mask. Keep zones tight around genuinely dynamic
 never widen a mask just to make a run go green — the
 [benchmark](bench/README.md) shows what a mask does to real defects when it does.
 
+## Position shift detection
+
+On a long page, one wrong section height moves everything below it. The content is correct; it
+is just 95px lower than the reference. Plain pixel comparison cannot tell that apart from dozens
+of unrelated defects, so an agent ends up "fixing" every region instead of the one thing that
+broke.
+
+`--detect-shifts` reports those runs separately. It is **off by default**: without the flag the
+output is byte-for-byte what it always was.
+
+```bash
+avd compare reference.png actual.png --detect-shifts
+```
+
+```json
+{
+  "regions": [ "…unchanged…" ],
+  "shifts": [
+    {
+      "id": 1,
+      "type": "position-shift",
+      "x": 0, "y": 2812, "w": 1440, "h": 899,
+      "deltaX": 0, "deltaY": -58,
+      "confidence": 0.8235,
+      "windows": 4,
+      "diffPixels": 1204371,
+      "evaluatedSamples": 316440
+    }
+  ],
+  "settings": { "threshold": 0.1, "detectShifts": true }
+}
+```
+
+The point is aggregation. One shift usually covers dozens of diff regions, so the report can say
+*"look for the section above y=2812 and compare its height"* instead of listing 40 things to fix.
+`shifts` is a top-level array beside `regions` rather than entries inside it, because displaced
+pixels did not change — `px`, `density` and `shareOfDiff` mean nothing for them, and folding them
+into `regions` would break the invariant that `shareOfDiff` sums against `diffPixels`.
+
+Only the option is exposed. The gates behind it were tuned against the benchmark, not guessed, and
+none of the internals needed a flag; they remain available to programmatic callers through
+`agent-visual-diff/shift`.
+
+### It is deliberately reluctant
+
+A false shift is worse than a missed one: it sends an agent after a layout cause that does not
+exist. A run of content is only called a shift when one translation explains it decisively **and**
+neighbouring windows agree on the same offset independently. Anything ambiguous stays an ordinary
+pixel diff.
+
+That conservatism is load-bearing, and measurably so. On the Stripe capture, a 100%-accurate pixel
+comparison finds a large real heading defect at 17.4% mismatch — a flat region like that "matches"
+at almost any offset, so a naive best-offset search confidently reports a shift that explains
+nothing. Gate 5 is what rejects it: a flat region never produces two adjacent windows agreeing on
+the same delta. The same gate is what keeps a repeated card grid from matching the wrong card.
+
+Read a shift as evidence, never as proof. It states that content below a point moved together by a
+constant amount. It does not say why, and the reported span is bounded by the evidence rather than
+by the true extent of the movement. A shift never suppresses a diff region and never grants a pass:
+`--fail-above` still fails on `diffRatio`.
+
+Full contract, including when to distrust a shift and the `schemaVersion` decision, in
+[`docs/agent-contract.md`](docs/agent-contract.md). Measured behaviour, including the cases where
+it declines to answer, in [`bench/README.md`](bench/README.md).
+
 ## CI mode
 
 Fail when the changed-pixel ratio exceeds a threshold:
@@ -210,6 +275,7 @@ JSON is still emitted on exit code `2`, so the failed run keeps its evidence.
 --max-regions <n>
 --mask <file.json>
 --ignore <x,y,w,h>
+--detect-shifts
 --fail-above <ratio>
 -h, --help
 -v, --version
@@ -228,6 +294,30 @@ JSON is still emitted on exit code `2`, so the failed run keeps its evidence.
 
 `px` is the number of changed pixels represented by a region. `area` is the final bounding-box area and may include padding or unchanged pixels inside the rectangle.
 
+### How a position shift is decided
+
+Only when `--detect-shifts` is passed, and on the diff mask from step 3, so masks are honoured for
+free:
+
+1. Count differing pixels per row, and group active rows into bands. Deciding *where* to look costs
+   no image reads at all.
+2. Split each band into windows of at most 400 rows, but never fewer than two, so a short displaced
+   section can still reach consensus.
+3. Skip a window whose content already matches in place above 95%: nothing to explain, and this is
+   the exit most windows on a long page take.
+4. For each window, sweep the vertical lag on a coarse stride to find the basin, then re-measure
+   every integer lag around it. Search the horizontal axis as a residual at that vertical delta, so
+   a diagonal displacement is judged as one translation.
+5. Apply five gates: the content must fail in place, translation must explain at least 85% of it and
+   beat it by a decisive margin, the best lag must be a single prominent interior peak, and
+   neighbouring windows must independently agree on the same delta.
+6. Fuse agreeing windows into a run, and join runs that agree across a small gap.
+
+Cost is bounded by construction: a coarse stride of 4 over ±200px, a fine sweep of ±8px, and at most
+64 bands. The search is linear in `maxShift`, not in image area, and the per-window work is
+proportional to the window's height. On the 1440×9319 Duna capture, shift detection adds roughly
+3.5s on top of a comparison that already takes ~4s — which is why it is opt-in.
+
 ## Programmatic API
 
 ```js
@@ -243,12 +333,19 @@ const report = comparePngFiles({
   mergeGap: 6,
   regionPadding: 4,
   mask: [{ name: 'testimonial-carousel', x: 120, y: 2100, w: 1200, h: 600 }],
-  ignore: [{ name: 'inline-1', x: 0, y: 7200, w: 1440, h: 400 }]
+  ignore: [{ name: 'inline-1', x: 0, y: 7200, w: 1440, h: 400 }],
+  detectShifts: true
 });
 ```
 
-Region primitives are also exported from `agent-visual-diff/regions`, and mask helpers
-(`readMaskFile`, `parseIgnoreSpec`, `clampRegions`, `buildIgnoreMask`) from `agent-visual-diff/mask`.
+`detectShifts` defaults to `false`. Omit it — or pass `false` — and the report is identical to
+what this API produced before the option existed: neither `shifts` nor `settings.detectShifts`
+appears, so treat `shifts` as present if and only if `settings.detectShifts` is `true`.
+
+Region primitives are also exported from `agent-visual-diff/regions`, mask helpers
+(`readMaskFile`, `parseIgnoreSpec`, `clampRegions`, `buildIgnoreMask`) from `agent-visual-diff/mask`,
+and the shift detector itself from `agent-visual-diff/shift` for callers who need to bound a
+pathological page.
 
 ## Playwright
 
@@ -263,10 +360,13 @@ npm install
 npm test
 npm run check
 npm run bench
+npm run bench:shifts
 npm run pack:dry
 ```
 
-`npm run bench` replays the mask benchmark against real page captures. See
+`npm run bench` replays the mask benchmark against real page captures. `npm run bench:shifts`
+replays the position shift benchmark: eight generated cases with known answers, then the Duna,
+Stripe and Apple captures. Both exit non-zero on failure. See
 [bench/README.md](bench/README.md) for the fixtures and the recorded numbers.
 
 Test the exact package artifact before publishing:
