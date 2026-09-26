@@ -99,9 +99,18 @@ for (const site of SITES) {
   fs.writeFileSync(path.join(outDir, `${site.key}-masked-bug.json`), `${JSON.stringify(withBug, null, 2)}\n`);
 
   const overlaps = (r, box) => !(r.x > box.x + box.w || r.x + r.w < box.x || r.y > box.y + box.h || r.y + r.h < box.y);
-  const bugRegions = withBug.regions.filter(r => overlaps(r, site.bug));
-  const bugDetected = withBug.diffPixels > masked.diffPixels;
-  const inBounds = bugRegions.length > 0;
+  const centreX = site.bug.x + Math.floor(site.bug.w / 2);
+  const centreY = site.bug.y + Math.floor(site.bug.h / 2);
+  const covers = r => r.x <= centreX && centreX < r.x + r.w && r.y <= centreY && centreY < r.y + r.h;
+  const centreRegion = withBug.regions.find(covers);
+  const bugRegion = centreRegion ?? withBug.regions.find(r => overlaps(r, site.bug));
+
+  const addedPx = withBug.diffPixels - masked.diffPixels;
+  const rectArea = site.bug.w * site.bug.h;
+  const signalShare = rectArea ? addedPx / rectArea : 0;
+  const bugDetected = addedPx > 0;
+  const centreCovered = Boolean(centreRegion);
+  const signalConcentrated = signalShare >= 0.9;
 
   const totalPixels = masked.width * masked.height;
   const invariantsOk =
@@ -130,9 +139,13 @@ for (const site of SITES) {
     evaluatedPx: masked.evaluatedPixels,
     removedPct: baseline.diffPixels ? 1 - masked.diffPixels / baseline.diffPixels : 0,
     bugPx: withBug.diffPixels,
-    bugRegion: bugRegions[0] ? `${bugRegions[0].x},${bugRegions[0].y} ${bugRegions[0].w}x${bugRegions[0].h}` : 'none',
+    addedPx,
+    rectArea,
+    signalShare,
+    bugRegion: bugRegion ? `${bugRegion.x},${bugRegion.y} ${bugRegion.w}x${bugRegion.h}` : 'none',
     bugDetected,
-    bugInBounds: inBounds,
+    centreCovered,
+    signalConcentrated,
     paddedOverlap: masked.regions.filter(r => mask.some(m => overlaps(r, m))).length,
     invariantsOk,
     deterministic
@@ -147,15 +160,20 @@ const body = rows.map(r =>
   `| ${r.site} | ${n(r.baselinePx)} | ${r.baselinePct} | ${n(r.maskedPx)} | ${r.maskedPct} | ${n(r.ignoredPx)} | ${n(r.evaluatedPx)} | ${pct(r.removedPct)} | ${r.baselineRegions} → ${r.maskedRegions} |`
 );
 
-const checkHeader = ['| Site | Masked px | Bug px | Bug region | Detected | Inside injected rect | Invariants | Repeat run identical | Region boxes overlapping a mask edge |', '| --- | ---: | ---: | --- | :---: | :---: | :---: | :---: | ---: |'];
+const checkHeader = [
+  '| Site | Masked px | Bug px | Added px | Injected area | Signal in rect | Region | Centre covered | Invariants | Repeat identical |',
+  '| --- | ---: | ---: | ---: | ---: | ---: | --- | :---: | :---: | :---: |'
+];
 const checkBody = rows.map(r =>
-  `| ${r.site} | ${n(r.maskedPx)} | ${n(r.bugPx)} | ${r.bugRegion} | ${r.bugDetected ? 'yes' : 'NO'} | ${r.bugInBounds ? 'yes' : 'no'} | ${r.invariantsOk ? 'ok' : 'BROKEN'} | ${r.deterministic ? 'yes' : 'NO'} | ${r.paddedOverlap} |`
+  `| ${r.site} | ${n(r.maskedPx)} | ${n(r.bugPx)} | ${n(r.addedPx)} | ${n(r.rectArea)} | ${(r.signalShare * 100).toFixed(1)}% | ${r.bugRegion} | ${r.centreCovered ? 'yes' : 'NO'} | ${r.invariantsOk ? 'ok' : 'BROKEN'} | ${r.deterministic ? 'yes' : 'NO'} |`
 );
 
 process.stdout.write(`${header.join('\n')}\n\n${body.join('\n')}\n\n`);
 process.stdout.write(`${checkHeader.join('\n')}\n\n${checkBody.join('\n')}\n`);
 
-const failed = rows.filter(r => !r.bugDetected || !r.bugInBounds || !r.deterministic || !r.invariantsOk);
+const failed = rows.filter(r =>
+  !r.bugDetected || !r.centreCovered || !r.signalConcentrated || !r.deterministic || !r.invariantsOk
+);
 if (failed.length) {
   process.stderr.write(`\nbenchmark FAILED for: ${failed.map(r => r.site).join(', ')}\n`);
   process.exit(1);

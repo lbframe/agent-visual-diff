@@ -63,11 +63,17 @@ Recorded 2026-09-26 · `avd` with masks · Node 24.
 
 Correctness checks:
 
-| Site | Masked px | Bug px | Bug region | Detected | Inside injected rect | Invariants | Repeat run identical |
-| --- | ---: | ---: | --- | :---: | :---: | :---: | :---: |
-| Duna desktop 1440x9610 | 56,475 | 131,939 | 198,398 424x187 | yes | yes | ok | yes |
-| Stripe reco 1440x900 | 141,267 | 162,867 | 1148,518 184x124 | yes | yes | ok | yes |
-| Apple gallery 1440x1000 | 10,226 | 34,226 | 558,248 204x124 | yes | yes | ok | yes |
+| Site | Masked px | Bug px | Added px | Injected area | Signal in rect | Region | Centre covered | Invariants | Repeat identical |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | :---: | :---: | :---: |
+| Duna desktop 1440x9610 | 56,475 | 131,939 | 75,464 | 75,600 | 99.8% | 198,398 424x187 | yes | ok | yes |
+| Stripe reco 1440x900 | 141,267 | 162,867 | 21,600 | 21,600 | 100.0% | 1148,518 184x124 | yes | ok | yes |
+| Apple gallery 1440x1000 | 10,226 | 34,226 | 24,000 | 24,000 | 100.0% | 558,248 204x124 | yes | ok | yes |
+
+`Signal in rect` is the added difference over the injected rectangle's area. Close to 100% means
+the injected defect accounts for essentially the whole new signal, so the check is not merely
+"some region overlaps the box". `Centre covered` asserts a detected region actually contains
+the rectangle's centre pixel. Duna sits at 99.8% because 136 pixels of its hero already
+differed before the fill and were overwritten by it.
 
 `Invariants` checks `evaluatedPixels === width*height - ignoredPixels`,
 `diffPixels <= baseline.diffPixels`, and `sum(region.px) <= diffPixels`.

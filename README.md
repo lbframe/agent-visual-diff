@@ -164,8 +164,11 @@ report a lower ratio just because the page is smaller. In the diff PNG, excluded
 20% gray wash and suppressed differences stay visible inside them as darker red. The JSON
 remains the source of truth for exact coordinates.
 
-Masks are viewport-scoped. Regions are clamped to the image; a region entirely outside it is
-an error rather than a silent no-op, so a typo fails loudly instead of quietly passing.
+Masks are viewport-scoped. Regions are validated and clamped to the image, and a region
+entirely outside it is an error rather than a silent no-op, so a typo fails loudly instead of
+quietly passing. The same validation applies whether a region arrives from `--mask`,
+`--ignore`, or straight from the programmatic API, so on any successful run
+`ignoredPixels + evaluatedPixels` always equals `width * height`.
 
 Masking is only as honest as the mask. Keep zones tight around genuinely dynamic UI, and
 never widen a mask just to make a run go green — the
